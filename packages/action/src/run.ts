@@ -198,7 +198,7 @@ export async function run() {
   });
 
   core.info(`Validate documents`);
-  const documentPatterns = core.getInput('documents');
+  const documentPatterns = core.getInput('documents').split('\n');
   const documents = await loadDocuments(documentPatterns, {
     loaders: [new GraphQLFileLoader(), new CodeFileLoader()],
   });
