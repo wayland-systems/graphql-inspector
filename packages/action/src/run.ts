@@ -1,8 +1,16 @@
 import { extname } from 'path';
-import { buildClientSchema, buildSchema, GraphQLSchema, printSchema, Source } from 'graphql';
+import {
+  buildClientSchema,
+  buildSchema,
+  graphql,
+  GraphQLSchema,
+  print,
+  printSchema,
+  Source,
+} from 'graphql';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { Rule } from '@graphql-inspector/core';
+import { Rule, validate } from '@graphql-inspector/core';
 import {
   CheckConclusion,
   createSummary,
@@ -10,10 +18,13 @@ import {
   printSchemaFromEndpoint,
   produceSchema,
 } from '@graphql-inspector/github';
+import { GraphQLFileLoader } from '@graphql-tools/graphql-file-loader';
+import { loadDocuments } from '@graphql-tools/load';
 import { updateCheckRun } from './checks';
 import { fileLoader } from './files';
 import { getAssociatedPullRequest, getCurrentCommitSha } from './git';
 import { castToBoolean, getInputAsArray, resolveRule } from './utils';
+import { CodeFileLoader } from '@graphql-tools/code-file-loader';
 
 const CHECK_NAME = 'GraphQL Inspector';
 
@@ -186,6 +197,18 @@ export async function run() {
     config,
   });
 
+  core.info(`Validate documents`);
+  const documentPatterns = core.getInput('documents');
+  const documents = await loadDocuments(documentPatterns, {
+    loaders: [new GraphQLFileLoader(), new CodeFileLoader()],
+  });
+
+  const docSources = documents
+    .map(doc => (doc.document ? new Source(print(doc.document), doc.location) : null))
+    .filter((s): s is Source => !!s);
+
+  const invalidDocuments = await validate(newSchema, docSources);
+
   let conclusion = action.conclusion;
   let annotations = action.annotations || [];
   const changes = action.changes || [];
@@ -211,7 +234,7 @@ export async function run() {
     annotations = [];
   }
 
-  const summary = createSummary(changes, 100, false);
+  const summary = createSummary(changes, invalidDocuments, 100, false);
 
   const title =
     conclusion === CheckConclusion.Failure

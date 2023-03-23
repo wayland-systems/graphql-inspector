@@ -30,6 +30,9 @@ inputs:
       An url to the GraphQL API. It should represent the "before" schema.
 
       When using an endpoint, 'schema' should point to a file (without a reference - branch name for example)
+  documents:
+    description: |
+      A list of glob patterns to find GraphQL documents (e.g. "src/**/*.graphql").
   github-token:
     default: '${{ github.token }}'
     required: false

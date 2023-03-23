@@ -1,7 +1,153 @@
-import { existsSync } from 'fs';
-import * as core from '@actions/core';
-import { ensureAbsolute } from '@graphql-inspector/commands';
-import { DiffRule, Rule } from '@graphql-inspector/core';
+import { Change, CriticalityLevel, InvalidDocument } from '@graphql-inspector/core';
+import { Endpoint } from './config';
+
+export function bolderize(msg: string): string {
+  return quotesTransformer(msg, '**');
+}
+
+export function quotesTransformer(msg: string, symbols = '**') {
+  const findSingleQuotes = /'([^']+)'/gim;
+  const findDoubleQuotes = /"([^"]+)"/gim;
+
+  function transformm(_: string, value: string) {
+    return `${symbols}${value}${symbols}`;
+  }
+
+  return msg.replace(findSingleQuotes, transformm).replace(findDoubleQuotes, transformm);
+}
+
+export function slackCoderize(msg: string): string {
+  return quotesTransformer(msg, '`');
+}
+
+export function discordCoderize(msg: string): string {
+  return quotesTransformer(msg, '`');
+}
+
+export function filterChangesByLevel(level: CriticalityLevel) {
+  return (change: Change) => change.criticality.level === level;
+}
+
+export function createSummary(
+  changes: Change[],
+  invalidDocuments: InvalidDocument[],
+  summaryLimit: number,
+  isLegacyConfig: boolean,
+) {
+  const breakingChanges = changes.filter(filterChangesByLevel(CriticalityLevel.Breaking));
+  const dangerousChanges = changes.filter(filterChangesByLevel(CriticalityLevel.Dangerous));
+  const safeChanges = changes.filter(filterChangesByLevel(CriticalityLevel.NonBreaking));
+
+  const summary: string[] = [
+    `# Found ${changes.length} change${changes.length > 1 ? 's' : ''}`,
+    '',
+    `Breaking: ${breakingChanges.length}`,
+    `Dangerous: ${dangerousChanges.length}`,
+    `Safe: ${safeChanges.length}`,
+    '',
+    `Found ${invalidDocuments.length} invalid document${invalidDocuments.length > 1 ? 's' : ''}`,
+  ];
+
+  if (isLegacyConfig) {
+    summary.push(
+      [
+        '',
+        '> Legacy config detected, [please migrate to a new syntax](https://graphql-inspector.com/docs/products/github#full-configuration)',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  if (changes.length > summaryLimit) {
+    summary.push(
+      [
+        '',
+        `Total amount of changes (${changes.length}) is over the limit (${summaryLimit})`,
+        'Adjust it using "summaryLimit" option',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  function addChangesToSummary(type: string, changes: Change[]): void {
+    if (changes.length <= summaryLimit) {
+      summary.push(
+        ...['', `## ${type} changes`].concat(
+          changes.map(change => ` - ${bolderize(change.message)}`),
+        ),
+      );
+    }
+
+    summaryLimit -= changes.length;
+  }
+
+  function addInvalidDocumentsToSummary(invalidDocuments: InvalidDocument[]): void {
+    if (invalidDocuments.length <= summaryLimit) {
+      summary.push(
+        ...['', `## Invalid documents`].concat(
+          invalidDocuments.map(doc => {
+            
+            const errorString = [...doc.errors, ...doc.deprecated].map(e => ` - ${bolderize(e.message)}`).join('\n');
+            return `in ${doc.source.name}:\n\n${errorString}`
+          }),
+        ),
+      );
+
+
+    summaryLimit -= invalidDocuments.length;
+    }
+
+  }
+
+  addInvalidDocumentsToSummary(invalidDocuments);
+
+  if (breakingChanges.length) {
+    addChangesToSummary('Breaking', breakingChanges);
+  }
+
+  if (dangerousChanges.length) {
+    addChangesToSummary('Dangerous', dangerousChanges);
+  }
+
+  if (safeChanges.length) {
+    addChangesToSummary('Safe', safeChanges);
+  }
+
+  summary.push(
+    [
+      '',
+      '___',
+      `Looking for more advanced tool? Try [GraphQL Hive](https://graphql-hive.com)!`,
+    ].join('\n'),
+  );
+
+  return summary.join('\n');
+}
+
+export function isNil(val: any): val is undefined | null {
+  return !val && typeof val !== 'boolean';
+}
+
+export function parseEndpoint(endpoint: Endpoint): {
+  url: string;
+  method: 'GET' | 'get' | 'post' | 'POST';
+  headers?: {
+    [name: string]: string;
+  };
+} {
+  if (typeof endpoint === 'string') {
+    return {
+      url: endpoint,
+      method: 'POST',
+    };
+  }
+
+  return {
+    url: endpoint.url,
+    method: endpoint.method || 'POST',
+    headers: endpoint.headers,
+  };
+}
 
 export function batch<T>(items: T[], limit: number): T[][] {
   const batches: T[][] = [];
@@ -22,39 +168,9 @@ export function batch<T>(items: T[], limit: number): T[][] {
   return batches;
 }
 
-/**
- * Treats non-falsy value as true
- */
-export function castToBoolean(value: string | boolean, defaultValue?: boolean): boolean {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-
-  if (value === 'true' || value === 'false') {
-    return value === 'true';
-  }
-
-  if (typeof defaultValue === 'boolean') {
-    return defaultValue;
-  }
-
-  return true;
-}
-
-export function getInputAsArray(name: string, options?: core.InputOptions): string[] {
-  return core
-    .getInput(name, options)
-    .split('\n')
-    .map(s => s.trim())
-    .filter(x => x !== '');
-}
-
-export function resolveRule(name: string): Rule | undefined {
-  const filepath = ensureAbsolute(name);
-
-  if (existsSync(filepath)) {
-    return require(filepath);
-  }
-
-  return DiffRule[name as keyof typeof DiffRule];
+export function objectFromEntries(iterable: any[]) {
+  return [...iterable].reduce((obj, [key, val]) => {
+    obj[key] = val;
+    return obj;
+  }, {});
 }
